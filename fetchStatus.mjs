@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
+import cliProgress from 'cli-progress';
 
 async function checkURLsFromCSV(inputFilePath, outputFilePath) {
   // Read and parse the input CSV file
@@ -14,7 +15,12 @@ async function checkURLsFromCSV(inputFilePath, outputFilePath) {
     skip_empty_lines: true,
   });
 
+  // Set up progress bar
+  const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+  progressBar.start(records.length, 0);
+
   // Process each URL
+  let completed = 0;
   for (const item of records) {
     try {
       const response = await fetch(item.URL, { redirect: 'follow' });
@@ -44,8 +50,13 @@ async function checkURLsFromCSV(inputFilePath, outputFilePath) {
     } catch (error) {
       console.error(`Error fetching URL ${item.URL}:`, error.message);
       item.Status = 'Error'; // Append error status
+    } finally {
+      completed++;
+      progressBar.update(completed);
     }
   }
+
+  progressBar.stop();
 
   // Write the results to the output CSV file
   const outputCSV = stringify(records, {
