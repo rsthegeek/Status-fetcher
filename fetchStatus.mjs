@@ -10,9 +10,10 @@ import pLimit from 'p-limit';
 
 async function processURL(item) {
   try {
-    const response = await fetch(item.URL, { redirect: 'follow' });
+    const response = await fetch(item.URL, { redirect: 'manual' });
     const finalURL = response.url;
     const statusCode = response.status;
+    const isYasaRelated = !item.URL.includes('https://www.yasa.co/');
 
     // Append the status code to the object
     item.Status = statusCode;
@@ -21,21 +22,53 @@ async function processURL(item) {
     if (statusCode >= 300 && statusCode < 400) {
       item['Redirect to'] = finalURL;
 
-      // Check for trailing slash redirection
-      const normalizedOriginalURL = item.URL.endsWith('/')
-        ? item.URL.slice(0, -1)
-        : item.URL;
-      const normalizedFinalURL = finalURL.endsWith('/')
-        ? finalURL.slice(0, -1)
-        : finalURL;
+      if (isYasaRelated) {
+        // Check for trailing slash redirection
+        const normalizedOriginalURL = item.URL.endsWith('/')
+          ? item.URL.slice(0, -1)
+          : item.URL;
+        const normalizedFinalURL = finalURL.endsWith('/')
+          ? finalURL.slice(0, -1)
+          : finalURL;
 
-      if (normalizedOriginalURL === normalizedFinalURL) {
-        item.Status = 404;
-        delete item['Redirect to']; // Remove redirect information for 404
+        if (normalizedOriginalURL === normalizedFinalURL) {
+          item.Status = 404;
+          delete item['Redirect to']; // Remove redirect information for 404
+        }
       }
+    }
+
+    if (isYasaRelated) {
+      await checkForRelatedOnBlog(item);
     }
   } catch (error) {
     console.error(`Error fetching URL ${item.URL}:`, error.message);
+    item.Status = 'Error'; // Append error status
+  }
+}
+
+async function checkForRelatedOnBlog(item) {
+  if (item.Status != 404) {
+    return;
+  }
+
+  try {
+    const uri = item.URL.replace('https://www.yasa.co', '');
+    const encodedUri = encodeURI(uri);
+    const response = await fetch(`https://www.yasa.co/blog${uri}`, { redirect: 'manual' });
+    const finalURL = response.url;
+    const statusCode = response.status;
+
+    if (statusCode < 300) {
+      item['nginx config'] = `  ${encodedUri} /blog${encodedUri};`;
+    }
+    else if (statusCode >= 300 && statusCode < 400) {
+      item['nginx config'] = `  ${encodedUri} /blog${encodeURI(finalURL.replace('https://www.yasa.co', ''))};`;
+    } else {
+      item['nginx config'] = null;
+    }
+  } catch (error) {
+    console.error(`Error fetching URL https://www.yasa.co/blog${uri}:`, error.message);
     item.Status = 'Error'; // Append error status
   }
 }
@@ -75,7 +108,7 @@ async function checkURLsFromCSV(inputFilePath, outputFilePath) {
   // Write the results to the output CSV file
   const outputCSV = stringify(records, {
     header: true,
-    columns: ['URL', 'Last crawled', 'Status', 'Redirect to'],
+    columns: ['URL', 'Last crawled', 'Status', 'Redirect to', 'nginx config'],
   });
 
   fs.writeFileSync(outputFilePath, outputCSV, 'utf8');
